@@ -1,0 +1,15 @@
+{
+  "name": "phishphalanx-firebase",
+  "version": "0.1.0",
+  "description": "Firebase initialization and blacklist seed scripts for PhishPhalanx.",
+  "main": "seed-blacklists.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "seed:blacklists": "node index.js seed:blacklists"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "firebase-admin": "^11.9.0"
+  }
+}
