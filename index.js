@@ -1,75 +1,137 @@
 /* jslint es6:true, node:true */
+'use strict';
+
 require('dotenv').config();
+
+const { connectDB, closeDB }                          = require('./src/db');
+const { seedSampleData }                              = require('./src/seed');
+const { checkBlacklist, addToBlacklist,
+        removeBlacklistEntry }                        = require('./src/blacklist');
+const { listIncidents, createIncident,
+        updateIncidentStatus }                        = require('./src/incidents');
+
 const argv = process.argv.slice(2);
-const { seedSampleData } = require('./src/seed');
-const { checkBlacklist, addToBlacklist, removeBlacklistEntry } = require('./src/blacklist');
-const { listIncidents, createIncident } = require('./src/incidents');
-const { closeDB } = require('./src/db');
+const cmd  = argv[0];
+
+// ── Help Text ──────────────────────────────────────────────────────────────────
+const HELP = `
+╔══════════════════════════════════════════════════════════════╗
+║           PhishPhalanx — Threat Intelligence CLI            ║
+╠══════════════════════════════════════════════════════════════╣
+║  USAGE: node index.js <command> [args]                       ║
+╠══════════════════════════════════════════════════════════════╣
+║  seed:blacklists                     Seed sample data       ║
+║  check-domain    <domain>            Check if blacklisted   ║
+║  add-blacklist   <domain> [type]     Add domain to list     ║
+║  remove-blacklist <domain>           Remove from list       ║
+║  list-incidents  [danger] [status]   List incidents         ║
+║  create-incident <danger> [id] [ip]  Report new incident    ║
+║  update-incident <INC-ID> <status>   Update incident status ║
+║  help                                Show this menu         ║
+╚══════════════════════════════════════════════════════════════╝
+`;
+
+// ── Main Entry Point ───────────────────────────────────────────────────────────
 
 /**
  * Main CLI entrypoint for PhishPhalanx.
- * Parses commands and routes to the appropriate module operations.
+ * Connects to MongoDB Atlas, routes to the appropriate module, then disconnects.
  */
 async function main() {
-  const cmd = argv[0];
   if (!cmd || cmd === 'help') {
-      console.log('Usage: node index.js <command> [args]\nCommands: seed:blacklists | check-domain <domain> | add-blacklist <domain> | remove-blacklist <domain> | list-incidents [dangerLevel] [status] | create-incident [dangerLevel] [analystId] [clientIp]');
+    console.log(HELP);
+    return;
   }
 
+  // Establish Mongoose connection before any DB operations
+  await connectDB();
+
   try {
+    // ── seed:blacklists ──────────────────────────────────────────────────────
     if (cmd === 'seed:blacklists') {
-      await seedSampleData();
-      return;
+      const res = await seedSampleData();
+      console.log('🎉 Seeding complete:', res);
     }
 
-    if (cmd === 'check-domain') {
+    // ── check-domain <domain> ────────────────────────────────────────────────
+    else if (cmd === 'check-domain') {
       const domain = argv[1];
+      if (!domain) { console.error('⚠️  Please provide a domain.'); return; }
       const res = await checkBlacklist(domain);
-      console.log(res.blacklisted ? 'BLACKLISTED' : 'clean', res.document);
+      if (res.blacklisted) {
+        console.log(`🚨 BLACKLISTED: ${domain}`);
+        console.log('   Entry:', res.document);
+      } else {
+        console.log(`✅ CLEAN: ${domain} is not on the blacklist.`);
+      }
     }
 
+    // ── add-blacklist <domain> [malwareType] ─────────────────────────────────
     else if (cmd === 'add-blacklist') {
-      const domain = argv[1];
-      const doc = await addToBlacklist(domain);
-      console.log('Added blacklist doc:', doc);
+      const domain      = argv[1];
+      const malwareType = argv[2] || 'phishing';
+      if (!domain) { console.error('⚠️  Please provide a domain.'); return; }
+      const doc = await addToBlacklist(domain, malwareType);
+      console.log('✅ Added to blacklist:', doc);
     }
 
+    // ── remove-blacklist <domain> ────────────────────────────────────────────
     else if (cmd === 'remove-blacklist') {
       const domain = argv[1];
+      if (!domain) { console.error('⚠️  Please provide a domain.'); return; }
       await removeBlacklistEntry(domain);
-      console.log('Removed blacklist entry for', domain);
+      console.log(`🗑️  Removed "${domain}" from blacklist.`);
     }
 
+    // ── create-incident <dangerLevel> [analystId] [clientIp] ────────────────
     else if (cmd === 'create-incident') {
-      const danger = argv[1];
-      const analystId = argv[2] || 'analyst-cli';
-      const clientIp = argv[3] || '127.0.0.1';
-
-      const data = {
-        dangerLevel: danger,
-        analystId: analystId,
-        clientIp: clientIp,
-      };
-
-      const result = await createIncident(data);
-      console.log('Created Incident successfully:', result);
+      const dangerLevel  = argv[1] || 'low';
+      const analystId    = argv[2] || 'cli-analyst';
+      const clientIp     = argv[3] || '127.0.0.1';
+      const incident = await createIncident({ dangerLevel, analystId, clientIp });
+      console.log('✅ Incident created:', incident);
     }
 
+    // ── list-incidents [dangerLevel] [status] ────────────────────────────────
     else if (cmd === 'list-incidents') {
-      const danger = argv[1];
-      const status = argv[2];
-      const results = await listIncidents({ dangerLevel: danger, status: status });
-      console.log('Incidents:', results);
+      const dangerLevel = argv[1];
+      const status      = argv[2];
+      const results     = await listIncidents({ dangerLevel, status });
+      if (results.length === 0) {
+        console.log('ℹ️  No incidents found matching the given filters.');
+      } else {
+        console.log(`📋 Found ${results.length} incident(s):`);
+        results.forEach((inc, i) => {
+          console.log(`\n  [${i + 1}] ${inc.incident_id} | ${inc.danger_level.toUpperCase()} | ${inc.status}`);
+          console.log(`       Domain : ${inc.target_domain || 'N/A'}`);
+          console.log(`       Analyst: ${inc.reporter_metadata.analyst_id}`);
+          console.log(`       IP     : ${inc.reporter_metadata.client_ip}`);
+        });
+      }
     }
 
-    else if (cmd && cmd !== 'help') {
-      console.log('Unknown command:', cmd);
+    // ── update-incident <incidentId> <newStatus> ─────────────────────────────
+    else if (cmd === 'update-incident') {
+      const incidentId = argv[1];
+      const newStatus  = argv[2];
+      if (!incidentId || !newStatus) {
+        console.error('⚠️  Usage: node index.js update-incident <INC-ID> <status>');
+        return;
+      }
+      await updateIncidentStatus(incidentId, newStatus);
+      console.log(`✅ Incident ${incidentId} updated to status: "${newStatus}"`);
     }
+
+    // ── Unknown command ──────────────────────────────────────────────────────
+    else {
+      console.log(`❓ Unknown command: "${cmd}"\n`);
+      console.log(HELP);
+    }
+
   } catch (err) {
-    console.error('Command failed:', err);
+    console.error('💥 Command failed:', err.message);
     process.exitCode = 1;
   } finally {
-    // Ensure the MongoDB connection is closed so the Node process can exit.
     await closeDB();
   }
 }

@@ -1,15 +1,17 @@
 {
-  "name": "phishphalanx-firebase",
-  "version": "0.1.0",
-  "description": "Firebase initialization and blacklist seed scripts for PhishPhalanx.",
-  "main": "seed-blacklists.js",
+  "name": "phishphalanx",
+  "version": "1.0.0",
+  "description": "Enterprise-grade Threat Intelligence and Phishing Incident Repository CLI backed by MongoDB Atlas.",
+  "main": "index.js",
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "seed:blacklists": "node index.js seed:blacklists"
+    "seed": "node src/seed.js",
+    "seed:blacklists": "node index.js seed:blacklists",
+    "help": "node index.js help"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
-    "mongodb": "^7.2.0"
+    "mongoose": "^8.15.0"
   }
 }

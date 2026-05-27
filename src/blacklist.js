@@ -1,11 +1,33 @@
 /* jslint es6:true, node:true */
-const crypto = require('crypto');
-const { getDb } = require('./db');
+'use strict';
 
-const BLACKLIST_COLLECTION = 'blacklists';
+const crypto   = require('crypto');
+const mongoose = require('mongoose');
+
+// ── Mongoose Schema ────────────────────────────────────────────────────────────
+
+const blacklistSchema = new mongoose.Schema(
+  {
+    // SHA-256 hash of the normalized domain used as the unique identifier
+    _id:           { type: String },
+    target_domain: { type: String, required: true },
+    malware_type:  { type: String, default: 'unknown' },
+    date_added:    { type: Date,   default: Date.now },
+  },
+  {
+    collection: 'blacklists',
+    // Disable auto _id since we manage it manually (SHA-256 hash)
+    _id: false,
+  }
+);
+
+const Blacklist =
+  mongoose.models.Blacklist || mongoose.model('Blacklist', blacklistSchema);
+
+// ── Helper Functions ───────────────────────────────────────────────────────────
 
 /**
- * Normalize a raw domain or defanged URL to a clean hostname for hashing.
+ * Normalize a raw domain or defanged URL to a clean hostname.
  * @param {string} rawDomain
  * @returns {string}
  */
@@ -20,22 +42,22 @@ function normalizeDomain(rawDomain) {
 }
 
 /**
- * Defang a hostname or URL so it cannot be executed accidentally.
+ * Defang a hostname so it cannot be accidentally clicked or executed.
  * @param {string} input
  * @returns {string}
  */
 function defangHostname(input) {
   if (!input) return '';
   let value = String(input).trim();
-  value = value.replace(/^https?:\/\//i, (match) => {
-    return match.toLowerCase().startsWith('https') ? 'hxxps://' : 'hxxp://';
-  });
+  value = value.replace(/^https?:\/\//i, (match) =>
+    match.toLowerCase().startsWith('https') ? 'hxxps://' : 'hxxp://'
+  );
   value = value.replace(/\./g, '[.]');
   return value;
 }
 
 /**
- * Compute the SHA-256 hash for a normalized domain value.
+ * Compute the SHA-256 hash of a normalized domain value.
  * @param {string} value
  * @returns {string}
  */
@@ -43,53 +65,47 @@ function hashDomain(value) {
   return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+// ── Domain Operations ──────────────────────────────────────────────────────────
+
 /**
- * Look up a normalized domain in MongoDB by its SHA-256 hash (_id).
+ * Look up a normalized domain in MongoDB by its SHA-256 hash.
+ * @param {string} domain
+ * @returns {Promise<{ blacklisted: boolean, document: Object|null }>}
  */
 async function checkBlacklist(domain) {
-  const db = await getDb();
   const normalized = normalizeDomain(domain);
-  if (!normalized) {
-    return { blacklisted: false, document: null };
-  }
+  if (!normalized) return { blacklisted: false, document: null };
 
   const docId = hashDomain(normalized);
-  const doc = await db.collection(BLACKLIST_COLLECTION).findOne({ _id: docId });
-  return {
-    blacklisted: !!doc,
-    document: doc,
-  };
+  const doc   = await Blacklist.findById(docId).lean();
+  return { blacklisted: !!doc, document: doc };
 }
 
 /**
- * Add a domain to MongoDB blacklist storage.
+ * Add a domain to the MongoDB blacklist (upsert — safe to call multiple times).
  * @param {string} domain
  * @param {string} [malwareType='unknown']
  * @returns {Promise<Object>}
  */
 async function addToBlacklist(domain, malwareType = 'unknown') {
-  const db = await getDb();
   const normalized = normalizeDomain(domain);
-  if (!normalized) throw new Error('Invalid domain');
+  if (!normalized) throw new Error('Invalid domain provided.');
 
   const defanged = defangHostname(normalized);
-  const docId = hashDomain(normalized);
-  const now = new Date();
+  const docId    = hashDomain(normalized);
 
-  const doc = {
-    _id: docId,
-    target_domain: defanged,
-    malware_type: malwareType,
-    date_added: now,
-  };
-
-  await db.collection(BLACKLIST_COLLECTION).updateOne(
-    { _id: docId },
-    { $set: doc },
-    { upsert: true }
+  await Blacklist.findByIdAndUpdate(
+    docId,
+    {
+      _id:           docId,
+      target_domain: defanged,
+      malware_type:  malwareType,
+      date_added:    new Date(),
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
-  return doc;
+  return { _id: docId, target_domain: defanged, malware_type: malwareType };
 }
 
 /**
@@ -98,16 +114,16 @@ async function addToBlacklist(domain, malwareType = 'unknown') {
  * @returns {Promise<boolean>}
  */
 async function removeBlacklistEntry(domain) {
-  const db = await getDb();
   const normalized = normalizeDomain(domain);
-  if (!normalized) throw new Error('Invalid domain');
-  
+  if (!normalized) throw new Error('Invalid domain provided.');
+
   const docId = hashDomain(normalized);
-  await db.collection(BLACKLIST_COLLECTION).deleteOne({ _id: docId });
+  await Blacklist.findByIdAndDelete(docId);
   return true;
 }
 
 module.exports = {
+  Blacklist,
   normalizeDomain,
   defangHostname,
   hashDomain,

@@ -1,15 +1,18 @@
 /* jslint es6:true, node:true */
-require('dotenv').config();
-const { MongoClient } = require('mongodb');
+'use strict';
 
-let client = null;
-let dbInstance = null;
+require('dotenv').config();
+const mongoose = require('mongoose');
 
 /**
- * Establish connection to MongoDB Atlas.
+ * Establish a Mongoose connection to MongoDB Atlas.
+ * Mongoose manages the connection pool internally.
  */
 async function connectDB() {
-  if (dbInstance) return dbInstance;
+  if (mongoose.connection.readyState === 1) {
+    // Already connected
+    return mongoose.connection;
+  }
 
   const uri = process.env.MONGO_URI;
   if (!uri) {
@@ -17,41 +20,26 @@ async function connectDB() {
   }
 
   try {
-    client = new MongoClient(uri);
-    await client.connect();
-    // Connects to the database specified in the URI (e.g., phishphalanx)
-    dbInstance = client.db();
-    return dbInstance;
+    await mongoose.connect(uri);
+    console.log('✅ Connected to MongoDB Atlas via Mongoose');
+    return mongoose.connection;
   } catch (error) {
-    console.error('Error connecting to MongoDB Atlas:', error);
+    console.error('❌ Error connecting to MongoDB Atlas:', error.message);
     throw error;
   }
 }
 
 /**
- * Helper function to retrieve the initialized MongoDB database instance.
- * @returns {Promise<Object>} The database instance
- */
-async function getDb() {
-  if (!dbInstance) {
-    await connectDB();
-  }
-  return dbInstance;
-}
-
-/**
- * Gracefully close the database connection.
+ * Gracefully close the Mongoose connection.
  */
 async function closeDB() {
-  if (client) {
-    await client.close();
-    client = null;
-    dbInstance = null;
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.connection.close();
+    console.log('🔌 MongoDB connection closed.');
   }
 }
 
 module.exports = {
   connectDB,
-  getDb,
   closeDB,
 };
