@@ -23,17 +23,24 @@ const Incident = require('./models/Incident');
  *
  * @param {{ reporterEmail?: string, dangerLevel?: string, targetDomain: string }} params
  * @returns {Promise<Object>} The saved incident as a plain JS object
+ * @throws {Error} If validation fails or database operation fails
  */
 async function createIncident({ reporterEmail, dangerLevel, targetDomain } = {}) {
-  const incident = new Incident({
-    targetDomain:  targetDomain  || 'unknown',
-    dangerLevel:   dangerLevel   || 'low',
-    reporterEmail: reporterEmail || '',
-    // incidentId, status, and timestamp use schema defaults automatically
-  });
+  try {
+    const incident = new Incident({
+      targetDomain:  targetDomain  || 'unknown',
+      dangerLevel:   dangerLevel   || 'low',
+      reporterEmail: reporterEmail || '',
+      // incidentId, status, and timestamp use schema defaults automatically
+    });
 
-  await incident.save();
-  return incident.toObject();
+    await incident.save();
+    console.log(`✅ Incident created successfully: ${incident.incidentId}`);
+    return incident.toObject();
+  } catch (error) {
+    console.error('❌ Failed to create incident:', error.message);
+    throw error;
+  }
 }
 
 /**
@@ -42,14 +49,51 @@ async function createIncident({ reporterEmail, dangerLevel, targetDomain } = {})
  *
  * @param {{ status?: string, dangerLevel?: string }} filters
  * @returns {Promise<Array>} Array of incident documents (plain objects)
+ * @throws {Error} If database query fails
  */
 async function listIncidents(filters = {}) {
-  const query = {};
-  if (filters.status)      query.status      = filters.status;
-  if (filters.dangerLevel) query.dangerLevel  = filters.dangerLevel;
+  try {
+    const query = {};
+    if (filters.status)      query.status      = filters.status;
+    if (filters.dangerLevel) query.dangerLevel  = filters.dangerLevel;
 
-  // Sort newest first using the timestamp field defined in the schema
-  return Incident.find(query).sort({ timestamp: -1 }).lean();
+    // Sort newest first using the timestamp field defined in the schema
+    const incidents = await Incident.find(query).sort({ timestamp: -1 }).lean();
+    console.log(`✅ Retrieved ${incidents.length} incident(s) with filters:`, filters);
+    return incidents;
+  } catch (error) {
+    console.error('❌ Failed to list incidents:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * getIncident()
+ * Finds a single incident by its unique incidentId.
+ *
+ * @param {string} incidentId  The unique INC-XXXXXXXX identifier
+ * @returns {Promise<Object|null>} The incident document or null if not found
+ * @throws {Error} If database query fails
+ */
+async function getIncident(incidentId) {
+  try {
+    if (!incidentId || typeof incidentId !== 'string') {
+      throw new Error('Invalid incidentId provided. Must be a non-empty string.');
+    }
+
+    const incident = await Incident.findOne({ incidentId }).lean();
+    
+    if (!incident) {
+      console.warn(`⚠️  Incident "${incidentId}" not found.`);
+      return null;
+    }
+
+    console.log(`✅ Retrieved incident: ${incidentId}`);
+    return incident;
+  } catch (error) {
+    console.error('❌ Failed to retrieve incident:', error.message);
+    throw error;
+  }
 }
 
 /**
@@ -64,25 +108,95 @@ async function listIncidents(filters = {}) {
  * @throws {Error} If the status is invalid or the incident is not found
  */
 async function updateIncidentStatus(incidentId, newStatus) {
-  const validStatuses = ['open', 'investigating', 'closed'];
-  if (!validStatuses.includes(newStatus)) {
-    throw new Error(`Invalid status "${newStatus}". Must be one of: ${validStatuses.join(', ')}`);
-  }
+  try {
+    if (!incidentId || typeof incidentId !== 'string') {
+      throw new Error('Invalid incidentId provided. Must be a non-empty string.');
+    }
 
-  const result = await Incident.updateOne(
-    { incidentId },
-    { $set: { status: newStatus } }
-  );
+    const validStatuses = ['open', 'investigating', 'closed'];
+    if (!validStatuses.includes(newStatus)) {
+      throw new Error(`Invalid status "${newStatus}". Must be one of: ${validStatuses.join(', ')}`);
+    }
 
-  if (result.matchedCount === 0) {
-    throw new Error(`Incident "${incidentId}" not found.`);
+    const result = await Incident.updateOne(
+      { incidentId },
+      { $set: { status: newStatus } }
+    );
+
+    if (result.matchedCount === 0) {
+      throw new Error(`Incident "${incidentId}" not found.`);
+    }
+
+    console.log(`✅ Updated incident ${incidentId} status to "${newStatus}"`);
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to update incident status:', error.message);
+    throw error;
   }
-  return true;
+}
+
+/**
+ * deleteIncident()
+ * Removes a false positive or incorrectly flagged incident from the database.
+ *
+ * @param {string} incidentId  The unique INC-XXXXXXXX identifier
+ * @returns {Promise<boolean>} true if deletion succeeded
+ * @throws {Error} If the incident is not found or deletion fails
+ */
+async function deleteIncident(incidentId) {
+  try {
+    if (!incidentId || typeof incidentId !== 'string') {
+      throw new Error('Invalid incidentId provided. Must be a non-empty string.');
+    }
+
+    const result = await Incident.deleteOne({ incidentId });
+
+    if (result.deletedCount === 0) {
+      throw new Error(`Incident "${incidentId}" not found. Nothing was deleted.`);
+    }
+
+    console.log(`✅ Deleted incident: ${incidentId}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to delete incident:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * getIncidentsBySeverity()
+ * Queries all OPEN incidents matching a specific danger level.
+ *
+ * @param {string} level  Must be one of: low, medium, high
+ * @returns {Promise<Array>} Array of open incident documents sorted by newest first
+ * @throws {Error} If the severity level is invalid or database query fails
+ */
+async function getIncidentsBySeverity(level) {
+  try {
+    const validLevels = ['low', 'medium', 'high'];
+    if (!validLevels.includes(level)) {
+      throw new Error(`Invalid severity level "${level}". Must be one of: ${validLevels.join(', ')}`);
+    }
+
+    const incidents = await Incident.find({ 
+      dangerLevel: level,
+      status: 'open'
+    }).sort({ timestamp: -1 }).lean();
+
+    console.log(`✅ Retrieved ${incidents.length} open incident(s) at severity level "${level}"`);
+    return incidents;
+  } catch (error) {
+    console.error('❌ Failed to retrieve incidents by severity:', error.message);
+    throw error;
+  }
 }
 
 module.exports = {
   Incident,
   createIncident,
   listIncidents,
+  getIncident,
   updateIncidentStatus,
+  deleteIncident,
+  getIncidentsBySeverity,
 };
