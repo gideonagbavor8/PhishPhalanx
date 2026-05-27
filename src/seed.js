@@ -1,20 +1,33 @@
 /* jslint es6:true, node:true */
 'use strict';
 
+/**
+ * seed.js — Database Seeder for PhishPhalanx
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Populates MongoDB Atlas with sample phishing incidents and blacklisted
+ * domains for development, testing, and demonstration purposes.
+ *
+ * Run directly: node src/seed.js
+ * Or via npm  : npm run seed
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 require('dotenv').config();
-const { connectDB, closeDB }                         = require('./db');
-const { Incident }                                   = require('./incidents');
-const { Blacklist, defangHostname, hashDomain,
-        normalizeDomain }                            = require('./blacklist');
+const { connectDB, closeDB }                       = require('./db');
+const Incident                                     = require('./models/Incident');
+const Blacklist                                    = require('./models/Blacklist');
+const { defangHostname, hashDomain, normalizeDomain } = require('./blacklist');
 
 /**
- * Seed sample phishing incidents and blacklist entries into MongoDB Atlas.
- * Clears existing data first to prevent duplicate key errors on re-seeding.
+ * seedSampleData()
+ * Clears existing incidents and blacklist entries, then inserts fresh sample
+ * data. Designed to be idempotent — safe to run multiple times.
  *
  * @returns {Promise<{ incidentsSeeded: number, blacklistSeeded: number }>}
  */
 async function seedSampleData() {
   await connectDB();
+  const now = new Date();
 
   // ── Clear existing data ────────────────────────────────────────────────────
   await Incident.deleteMany({});
@@ -22,63 +35,48 @@ async function seedSampleData() {
   console.log('🗑️  Cleared existing incidents and blacklist entries.');
 
   // ── Sample Incident Documents ──────────────────────────────────────────────
-  const now = new Date();
-
+  // Each document matches the Incident schema fields exactly:
+  // incidentId, targetDomain, dangerLevel, reporterEmail, status, timestamp
   const incidents = [
     {
-      incident_id:   'INC-1001',
-      target_domain: defangHostname('secure-paypal-login.com'),
-      danger_level:  'high',
-      reporter_metadata: {
-        analyst_id: 'analyst1@security.example',
-        client_ip:  '192.168.1.50',
-      },
-      status:    'unresolved',
-      createdAt: now,
+      incidentId:    'INC-1001',
+      targetDomain:  defangHostname('secure-paypal-login.com'),
+      dangerLevel:   'high',
+      reporterEmail: 'analyst1@security.example',
+      status:        'open',
+      timestamp:     now,
     },
     {
-      incident_id:   'INC-1002',
-      target_domain: defangHostname('appleid.verify-account.org'),
-      danger_level:  'medium',
-      reporter_metadata: {
-        analyst_id: 'analyst2@security.example',
-        client_ip:  '192.168.1.51',
-      },
-      status:    'investigating',
-      createdAt: now,
+      incidentId:    'INC-1002',
+      targetDomain:  defangHostname('appleid.verify-account.org'),
+      dangerLevel:   'medium',
+      reporterEmail: 'analyst2@security.example',
+      status:        'investigating',
+      timestamp:     now,
     },
     {
-      incident_id:   'INC-1003',
-      target_domain: defangHostname('office365-login-secure.net'),
-      danger_level:  'high',
-      reporter_metadata: {
-        analyst_id: 'threat@company.local',
-        client_ip:  '10.0.0.12',
-      },
-      status:    'unresolved',
-      createdAt: now,
+      incidentId:    'INC-1003',
+      targetDomain:  defangHostname('office365-login-secure.net'),
+      dangerLevel:   'high',
+      reporterEmail: 'threat@company.local',
+      status:        'open',
+      timestamp:     now,
     },
     {
-      incident_id:   'INC-1004',
-      target_domain: defangHostname('bank-update-verify.com'),
-      danger_level:  'critical',
-      reporter_metadata: {
-        analyst_id: 'fraud-team@bank.example',
-        client_ip:  '172.16.254.1',
-      },
-      status:    'unresolved',
-      createdAt: now,
+      incidentId:    'INC-1004',
+      targetDomain:  defangHostname('bank-update-verify.com'),
+      dangerLevel:   'high',
+      reporterEmail: 'fraud-team@bank.example',
+      status:        'open',
+      timestamp:     now,
     },
     {
-      incident_id:   'INC-1005',
-      target_domain: defangHostname('invoice-attachment-payments.biz'),
-      danger_level:  'medium',
-      reporter_metadata: {
-        analyst_id: 'alerts@finance.example',
-        client_ip:  '192.168.10.15',
-      },
-      status:    'resolved',
-      createdAt: now,
+      incidentId:    'INC-1005',
+      targetDomain:  defangHostname('invoice-attachment-payments.biz'),
+      dangerLevel:   'medium',
+      reporterEmail: 'alerts@finance.example',
+      status:        'closed',
+      timestamp:     now,
     },
   ];
 
@@ -86,7 +84,9 @@ async function seedSampleData() {
   console.log(`✅ Seeded ${incidents.length} incident(s).`);
 
   // ── Sample Blacklist Documents ─────────────────────────────────────────────
-  const blacklistDomains = [
+  // Each document matches the Blacklist schema fields exactly:
+  // domainHash, originalDomain, addedAt
+  const rawDomains = [
     'secure-paypal-login.com',
     'appleid.verify-account.org',
     'office365-login-secure.net',
@@ -94,13 +94,12 @@ async function seedSampleData() {
     'invoice-attachment-payments.biz',
   ];
 
-  const blacklistDocs = blacklistDomains.map((d) => {
+  const blacklistDocs = rawDomains.map((d) => {
     const normalized = normalizeDomain(d);
     return {
-      _id:           hashDomain(normalized),
-      target_domain: defangHostname(normalized),
-      malware_type:  'phishing',
-      date_added:    now,
+      domainHash:     hashDomain(normalized),
+      originalDomain: defangHostname(normalized),
+      addedAt:        now,
     };
   });
 
@@ -112,7 +111,7 @@ async function seedSampleData() {
 
 module.exports = { seedSampleData };
 
-// Run directly: node src/seed.js
+// ── Run directly ───────────────────────────────────────────────────────────────
 if (require.main === module) {
   seedSampleData()
     .then(async (res) => {
@@ -121,7 +120,7 @@ if (require.main === module) {
       process.exit(0);
     })
     .catch(async (err) => {
-      console.error('💥 Seeding failed:', err);
+      console.error('💥 Seeding failed:', err.message);
       await closeDB();
       process.exitCode = 1;
     });

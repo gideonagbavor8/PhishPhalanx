@@ -1,63 +1,35 @@
 /* jslint es6:true, node:true */
 'use strict';
 
-const crypto = require('crypto');
-const mongoose = require('mongoose');
+/**
+ * incidents.js — CRUD Operations for Phishing Incidents
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Provides the business logic layer for creating, reading, and updating
+ * phishing incident records. All database interaction goes through the
+ * Incident Mongoose model defined in /src/models/Incident.js.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 
-// ── Mongoose Schema ────────────────────────────────────────────────────────────
-
-const reporterMetadataSchema = new mongoose.Schema(
-  {
-    analyst_id: { type: String, required: true },
-    client_ip:  { type: String, default: '0.0.0.0' },
-  },
-  { _id: false }
-);
-
-const incidentSchema = new mongoose.Schema(
-  {
-    incident_id: {
-      type:    String,
-      unique:  true,
-      default: () => `INC-${crypto.randomBytes(4).toString('hex').toUpperCase()}`,
-    },
-    target_domain: { type: String, default: '' },
-    danger_level: {
-      type:    String,
-      enum:    ['low', 'medium', 'high', 'critical'],
-      default: 'low',
-    },
-    status: {
-      type:    String,
-      enum:    ['unresolved', 'investigating', 'resolved'],
-      default: 'unresolved',
-    },
-    reporter_metadata: { type: reporterMetadataSchema, required: true },
-  },
-  {
-    timestamps: true,   // adds createdAt & updatedAt automatically
-    collection: 'incidents',
-  }
-);
-
-// Create model only once (prevents OverwriteModelError on re-require)
-const Incident = mongoose.models.Incident || mongoose.model('Incident', incidentSchema);
+// Import the Incident model from the dedicated models folder.
+// The schema (fields, validation, enums) lives there; this file only
+// contains the functions that operate on those documents.
+const Incident = require('./models/Incident');
 
 // ── CRUD Operations ────────────────────────────────────────────────────────────
 
 /**
- * Creates a new phishing incident document.
- * @param {{ analystId: string, clientIp?: string, dangerLevel?: string, targetDomain?: string }} params
- * @returns {Promise<Object>} The saved incident document
+ * createIncident()
+ * Creates and persists a new phishing incident document in MongoDB Atlas.
+ *
+ * @param {{ reporterEmail?: string, dangerLevel?: string, targetDomain: string }} params
+ * @returns {Promise<Object>} The saved incident as a plain JS object
  */
-async function createIncident({ analystId, clientIp, dangerLevel, targetDomain } = {}) {
+async function createIncident({ reporterEmail, dangerLevel, targetDomain } = {}) {
   const incident = new Incident({
-    target_domain:     targetDomain || '',
-    danger_level:      dangerLevel  || 'low',
-    reporter_metadata: {
-      analyst_id: analystId,
-      client_ip:  clientIp || '0.0.0.0',
-    },
+    targetDomain:  targetDomain  || 'unknown',
+    dangerLevel:   dangerLevel   || 'low',
+    reporterEmail: reporterEmail || '',
+    // incidentId, status, and timestamp use schema defaults automatically
   });
 
   await incident.save();
@@ -65,37 +37,45 @@ async function createIncident({ analystId, clientIp, dangerLevel, targetDomain }
 }
 
 /**
- * Retrieve incidents, optionally filtered by status or danger level.
+ * listIncidents()
+ * Retrieves incidents from MongoDB, with optional filtering.
+ *
  * @param {{ status?: string, dangerLevel?: string }} filters
- * @returns {Promise<Array>}
+ * @returns {Promise<Array>} Array of incident documents (plain objects)
  */
 async function listIncidents(filters = {}) {
   const query = {};
-  if (filters.status)      query.status       = filters.status;
-  if (filters.dangerLevel) query.danger_level  = filters.dangerLevel;
+  if (filters.status)      query.status      = filters.status;
+  if (filters.dangerLevel) query.dangerLevel  = filters.dangerLevel;
 
-  return Incident.find(query).sort({ createdAt: -1 }).lean();
+  // Sort newest first using the timestamp field defined in the schema
+  return Incident.find(query).sort({ timestamp: -1 }).lean();
 }
 
 /**
- * Updates the resolution status of an incident by its incident_id.
- * @param {string} incidentId
- * @param {string} newStatus
- * @returns {Promise<boolean>}
+ * updateIncidentStatus()
+ * Updates the workflow status of a specific incident by its incidentId.
+ *
+ * Valid transitions: open → investigating → closed
+ *
+ * @param {string} incidentId  The unique INC-XXXXXXXX identifier
+ * @param {string} newStatus   Must be one of: open, investigating, closed
+ * @returns {Promise<boolean>} true if update succeeded
+ * @throws {Error} If the status is invalid or the incident is not found
  */
 async function updateIncidentStatus(incidentId, newStatus) {
-  const validStatuses = ['unresolved', 'investigating', 'resolved'];
+  const validStatuses = ['open', 'investigating', 'closed'];
   if (!validStatuses.includes(newStatus)) {
-    throw new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
+    throw new Error(`Invalid status "${newStatus}". Must be one of: ${validStatuses.join(', ')}`);
   }
 
   const result = await Incident.updateOne(
-    { incident_id: incidentId },
+    { incidentId },
     { $set: { status: newStatus } }
   );
 
   if (result.matchedCount === 0) {
-    throw new Error(`Incident ${incidentId} not found.`);
+    throw new Error(`Incident "${incidentId}" not found.`);
   }
   return true;
 }

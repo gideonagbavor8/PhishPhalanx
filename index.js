@@ -25,8 +25,8 @@ const HELP = `
 ║  add-blacklist   <domain> [type]     Add domain to list     ║
 ║  remove-blacklist <domain>           Remove from list       ║
 ║  list-incidents  [danger] [status]   List incidents         ║
-║  create-incident <danger> [id] [ip]  Report new incident    ║
-║  update-incident <INC-ID> <status>   Update incident status ║
+║  create-incident <danger> [email] [domain] Report new incident ║
+║  update-incident <INC-ID> <status>  Update incident status  ║
 ║  help                                Show this menu         ║
 ╚══════════════════════════════════════════════════════════════╝
 `;
@@ -83,12 +83,12 @@ async function main() {
       console.log(`🗑️  Removed "${domain}" from blacklist.`);
     }
 
-    // ── create-incident <dangerLevel> [analystId] [clientIp] ────────────────
+    // ── create-incident <dangerLevel> [reporterEmail] [targetDomain] ──────────
     else if (cmd === 'create-incident') {
-      const dangerLevel  = argv[1] || 'low';
-      const analystId    = argv[2] || 'cli-analyst';
-      const clientIp     = argv[3] || '127.0.0.1';
-      const incident = await createIncident({ dangerLevel, analystId, clientIp });
+      const dangerLevel   = argv[1] || 'low';
+      const reporterEmail = argv[2] || 'cli-analyst@phishphalanx.local';
+      const targetDomain  = argv[3] || 'unknown';
+      const incident = await createIncident({ dangerLevel, reporterEmail, targetDomain });
       console.log('✅ Incident created:', incident);
     }
 
@@ -102,10 +102,10 @@ async function main() {
       } else {
         console.log(`📋 Found ${results.length} incident(s):`);
         results.forEach((inc, i) => {
-          console.log(`\n  [${i + 1}] ${inc.incident_id} | ${inc.danger_level.toUpperCase()} | ${inc.status}`);
-          console.log(`       Domain : ${inc.target_domain || 'N/A'}`);
-          console.log(`       Analyst: ${inc.reporter_metadata.analyst_id}`);
-          console.log(`       IP     : ${inc.reporter_metadata.client_ip}`);
+          console.log(`\n  [${i + 1}] ${inc.incidentId} | ${inc.dangerLevel.toUpperCase()} | ${inc.status}`);
+          console.log(`       Domain : ${inc.targetDomain || 'N/A'}`);
+          console.log(`       Reporter: ${inc.reporterEmail || 'N/A'}`);
+          console.log(`       Time   : ${new Date(inc.timestamp).toISOString()}`);
         });
       }
     }
