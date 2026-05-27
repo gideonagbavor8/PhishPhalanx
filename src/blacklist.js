@@ -1,6 +1,6 @@
 /* jslint es6:true, node:true */
 const crypto = require('crypto');
-const { getFirebase } = require('./db');
+const { getDb } = require('./db');
 
 const BLACKLIST_COLLECTION = 'blacklists';
 
@@ -44,49 +44,52 @@ function hashDomain(value) {
 }
 
 /**
- * Look up a normalized domain in Firestore by its SHA-256 hash.
- * Returns whether the item is blacklisted and the matching document.
+ * Look up a normalized domain in MongoDB by its SHA-256 hash (_id).
  */
-async function checkBlacklist(domain, options = {}) {
-  const { firestore } = getFirebase(options);
+async function checkBlacklist(domain) {
+  const db = await getDb();
   const normalized = normalizeDomain(domain);
   if (!normalized) {
     return { blacklisted: false, document: null };
   }
 
   const docId = hashDomain(normalized);
-  const doc = await firestore.collection(BLACKLIST_COLLECTION).doc(docId).get();
+  const doc = await db.collection(BLACKLIST_COLLECTION).findOne({ _id: docId });
   return {
-    blacklisted: doc.exists,
-    document: doc.exists ? Object.assign({ id: doc.id }, doc.data()) : null,
+    blacklisted: !!doc,
+    document: doc,
   };
 }
 
 /**
- * Add a domain to Firestore blacklist storage after defanging and hashing it.
+ * Add a domain to MongoDB blacklist storage.
  * @param {string} domain
+ * @param {string} [malwareType='unknown']
  * @returns {Promise<Object>}
  */
-async function addToBlacklist(domain, options = {}) {
-  const { firestore } = getFirebase(options);
+async function addToBlacklist(domain, malwareType = 'unknown') {
+  const db = await getDb();
   const normalized = normalizeDomain(domain);
   if (!normalized) throw new Error('Invalid domain');
 
   const defanged = defangHostname(normalized);
   const docId = hashDomain(normalized);
-  const now = firestore.Timestamp ? firestore.Timestamp.now() : new Date();
+  const now = new Date();
 
-  await firestore.collection(BLACKLIST_COLLECTION).doc(docId).set({
-    domainHash: docId,
-    originalDomain: defanged,
-    addedAt: now,
-  }, { merge: false });
-
-  return {
-    domainHash: docId,
-    originalDomain: defanged,
-    addedAt: now,
+  const doc = {
+    _id: docId,
+    target_domain: defanged,
+    malware_type: malwareType,
+    date_added: now,
   };
+
+  await db.collection(BLACKLIST_COLLECTION).updateOne(
+    { _id: docId },
+    { $set: doc },
+    { upsert: true }
+  );
+
+  return doc;
 }
 
 /**
@@ -94,12 +97,13 @@ async function addToBlacklist(domain, options = {}) {
  * @param {string} domain
  * @returns {Promise<boolean>}
  */
-async function removeBlacklistEntry(domain, options = {}) {
-  const { firestore } = getFirebase(options);
+async function removeBlacklistEntry(domain) {
+  const db = await getDb();
   const normalized = normalizeDomain(domain);
   if (!normalized) throw new Error('Invalid domain');
+  
   const docId = hashDomain(normalized);
-  await firestore.collection(BLACKLIST_COLLECTION).doc(docId).delete();
+  await db.collection(BLACKLIST_COLLECTION).deleteOne({ _id: docId });
   return true;
 }
 

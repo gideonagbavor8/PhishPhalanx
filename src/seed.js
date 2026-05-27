@@ -1,83 +1,83 @@
 /* jslint es6:true, node:true */
 require('dotenv').config();
-const crypto = require('crypto');
-const { firestore } = require('../src/db');
+const { getDb, closeDB } = require('./db');
+const { defangHostname, hashDomain, normalizeDomain } = require('./blacklist');
 
 /**
- * Defang a hostname or URL so it can be stored safely in Firestore.
- * @param {string} domain
- * @returns {string}
- */
-function defangDomain(domain) {
-  if (!domain) return '';
-  let v = String(domain).trim();
-  v = v.replace(/^https?:\/\//i, (m) => (m.toLowerCase().startsWith('https') ? 'hxxps://' : 'hxxp://'));
-  v = v.replace(/\./g, '[.]');
-  return v;
-}
-
-/**
- * Create a SHA-256 hash for a normalized domain value.
- * @param {string} domain
- * @returns {string}
- */
-function hashDomain(domain) {
-  return crypto.createHash('sha256').update(domain, 'utf8').digest('hex');
-}
-
-/**
- * Seed sample phishing incident and blacklist documents into Firestore.
+ * Seed sample phishing incident and blacklist documents into MongoDB.
  * @returns {Promise<{incidentsSeeded:number, blacklistSeeded:number}>}
  */
 async function seedSampleData() {
-  const now = firestore.Timestamp ? firestore.Timestamp.now() : new Date();
+  const db = await getDb();
+  const now = new Date();
+
+  // Clear existing data to prevent duplicate keys on re-seeding
+  await db.collection('incidents').deleteMany({});
+  await db.collection('blacklists').deleteMany({});
 
   // Sample incidents (realistic phishing examples)
   const incidents = [
     {
-      incidentId: 'inc-1001',
-      targetDomain: defangDomain('secure-paypal-login.com'),
-      dangerLevel: 'high',
-      reporterEmail: 'analyst1@security.example',
-      status: 'open',
+      incident_id: 'inc-1001',
+      target_domain: defangHostname('secure-paypal-login.com'),
+      danger_level: 'high',
+      reporter_metadata: {
+        analyst_id: 'analyst1@security.example',
+        client_ip: '192.168.1.50',
+      },
+      status: 'unresolved',
       timestamp: now,
     },
     {
-      incidentId: 'inc-1002',
-      targetDomain: defangDomain('appleid.verify-account.org'),
-      dangerLevel: 'medium',
-      reporterEmail: 'analyst2@security.example',
+      incident_id: 'inc-1002',
+      target_domain: defangHostname('appleid.verify-account.org'),
+      danger_level: 'medium',
+      reporter_metadata: {
+        analyst_id: 'analyst2@security.example',
+        client_ip: '192.168.1.51',
+      },
       status: 'investigating',
       timestamp: now,
     },
     {
-      incidentId: 'inc-1003',
-      targetDomain: defangDomain('office365-login-secure.net'),
-      dangerLevel: 'high',
-      reporterEmail: 'threat@company.local',
-      status: 'open',
+      incident_id: 'inc-1003',
+      target_domain: defangHostname('office365-login-secure.net'),
+      danger_level: 'high',
+      reporter_metadata: {
+        analyst_id: 'threat@company.local',
+        client_ip: '10.0.0.12',
+      },
+      status: 'unresolved',
       timestamp: now,
     },
     {
-      incidentId: 'inc-1004',
-      targetDomain: defangDomain('bank-update-verify.com'),
-      dangerLevel: 'critical',
-      reporterEmail: 'fraud-team@bank.example',
-      status: 'open',
+      incident_id: 'inc-1004',
+      target_domain: defangHostname('bank-update-verify.com'),
+      danger_level: 'critical',
+      reporter_metadata: {
+        analyst_id: 'fraud-team@bank.example',
+        client_ip: '172.16.254.1',
+      },
+      status: 'unresolved',
       timestamp: now,
     },
     {
-      incidentId: 'inc-1005',
-      targetDomain: defangDomain('invoice-attachment-payments.biz'),
-      dangerLevel: 'medium',
-      reporterEmail: 'alerts@finance.example',
-      status: 'closed',
+      incident_id: 'inc-1005',
+      target_domain: defangHostname('invoice-attachment-payments.biz'),
+      danger_level: 'medium',
+      reporter_metadata: {
+        analyst_id: 'alerts@finance.example',
+        client_ip: '192.168.10.15',
+      },
+      status: 'resolved',
       timestamp: now,
     },
   ];
 
+  await db.collection('incidents').insertMany(incidents);
+
   // Sample blacklist entries
-  const blacklist = [
+  const blacklistDomains = [
     'secure-paypal-login.com',
     'appleid.verify-account.org',
     'office365-login-secure.net',
@@ -85,48 +85,33 @@ async function seedSampleData() {
     'invoice-attachment-payments.biz',
   ];
 
-  const batch = firestore.batch();
-
-  // Write incidents
-  incidents.forEach((inc) => {
-    const docRef = firestore.collection('incidents').doc(inc.incidentId);
-    batch.set(docRef, {
-      incidentId: inc.incidentId,
-      targetDomain: inc.targetDomain,
-      dangerLevel: inc.dangerLevel,
-      reporterEmail: inc.reporterEmail,
-      status: inc.status,
-      timestamp: inc.timestamp,
-    });
+  const blacklistDocs = blacklistDomains.map((d) => {
+    const normalized = normalizeDomain(d);
+    return {
+      _id: hashDomain(normalized),
+      target_domain: defangHostname(normalized),
+      malware_type: 'phishing',
+      date_added: now,
+    };
   });
 
-  // Write blacklist entries to the standard `blacklists` collection.
-  blacklist.forEach((d) => {
-    const normalized = String(d).trim().toLowerCase();
-    const docId = hashDomain(normalized);
-    const docRef = firestore.collection('blacklists').doc(docId);
-    batch.set(docRef, {
-      domainHash: docId,
-      originalDomain: defangDomain(normalized),
-      addedAt: now,
-    });
-  });
+  await db.collection('blacklists').insertMany(blacklistDocs);
 
-  await batch.commit();
-  return { incidentsSeeded: incidents.length, blacklistSeeded: blacklist.length };
+  return { incidentsSeeded: incidents.length, blacklistSeeded: blacklistDocs.length };
 }
 
 module.exports = { seedSampleData };
 
 if (require.main === module) {
   seedSampleData()
-    .then((res) => {
+    .then(async (res) => {
       console.log('Seeding complete', res);
+      await closeDB();
       process.exit(0);
     })
-    .catch((err) => {
+    .catch(async (err) => {
       console.error('Seeding failed:', err);
+      await closeDB();
       process.exitCode = 1;
     });
 }
-
