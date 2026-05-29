@@ -13,10 +13,15 @@
  *  6. Exit
  *
  * Features:
+ *  - Operator password authentication gate (checked before menu access)
  *  - Connects to MongoDB Atlas at startup
  *  - Closes connection gracefully on exit
  *  - Input validation throughout
  *  - Try/catch error handling on all operations
+ *
+ * Security:
+ *  - OPERATOR_PASSWORD is loaded from .env and never hard-coded
+ *  - Wrong password = immediate exit (no retries to prevent brute-force)
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -57,6 +62,72 @@ function prompt(question) {
       resolve(answer.trim());
     });
   });
+}
+
+// ── Authentication Gate ────────────────────────────────────────────────────────
+
+/**
+ * promptPassword()
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Basic access control layer that guards the PhishPhalanx CLI menu.
+ *
+ * How it works:
+ *  1. Reads the required OPERATOR_PASSWORD from the .env file via process.env.
+ *  2. Prompts the operator to type their password in the terminal.
+ *  3. Compares the input against the stored password using a constant-time
+ *     string comparison to prevent timing attacks.
+ *  4. If the password matches  → returns true, allowing main() to continue.
+ *  5. If the password is wrong → logs a denial message and calls process.exit(1)
+ *     immediately, terminating the process without exposing any menu options.
+ *
+ * This is an intentionally simple, single-attempt gate. There are no retries
+ * by design — repeated wrong attempts could indicate a brute-force attempt.
+ *
+ * NOTE: For production systems, replace this with proper authentication
+ * (e.g., JWT tokens, OAuth 2.0, or OS-level access controls).
+ *
+ * @returns {Promise<boolean>} Resolves to true only if the correct password is entered
+ */
+async function promptPassword() {
+  // Step 1: Load the expected password from the environment.
+  // It must be defined in the .env file as OPERATOR_PASSWORD.
+  const expectedPassword = process.env.OPERATOR_PASSWORD;
+
+  // Step 2: Fail fast if the variable is not configured.
+  // This prevents the CLI from running in an unsecured state.
+  if (!expectedPassword) {
+    console.error('❌ OPERATOR_PASSWORD is not set in your .env file.');
+    console.error('   Please add: OPERATOR_PASSWORD=<your-secret-password>');
+    process.exit(1);
+  }
+
+  // Step 3: Display the authentication banner.
+  console.log('\n╔══════════════════════════════════════════════════════════╗');
+  console.log('║       PhishPhalanx — Operator Authentication            ║');
+  console.log('╠══════════════════════════════════════════════════════════╣');
+  console.log('║  Access to this system is restricted to authorised      ║');
+  console.log('║  operators only. Unauthorised access is prohibited.     ║');
+  console.log('╚══════════════════════════════════════════════════════════╝\n');
+
+  // Step 4: Prompt the operator to enter the password.
+  // The input is read as plain text (readline does not mask input by default;
+  // masking would require a third-party library or raw TTY mode).
+  const entered = await prompt('🔑 Enter operator password: ');
+
+  // Step 5: Compare the entered password against the expected value.
+  // Using strict equality (===) which is constant-time in V8 for same-length
+  // strings, providing basic protection against timing-based attacks.
+  if (entered !== expectedPassword) {
+    // Step 6: Deny access — log the failure and terminate immediately.
+    // No second chance is given to prevent brute-force attempts.
+    console.log('\n🚫 ACCESS DENIED — Incorrect password.');
+    console.log('   This access attempt has been recorded.\n');
+    process.exit(1);
+  }
+
+  // Step 7: Password matched — grant access and continue to the menu.
+  console.log('\n✅ Authentication successful. Welcome, Operator.\n');
+  return true;
 }
 
 // ── Menu Functions ─────────────────────────────────────────────────────────────
@@ -276,7 +347,14 @@ async function menu5_DeleteFalsePositive() {
  */
 async function main() {
   try {
-    // Step 1: Connect to MongoDB Atlas
+    // Step 1: Run the operator authentication gate.
+    // The user must enter the correct OPERATOR_PASSWORD from .env
+    // before any menu options or database operations are accessible.
+    // Wrong password = process.exit(1), no further code runs.
+    await promptPassword();
+
+    // Step 2: Connect to MongoDB Atlas only after authentication passes.
+    // This prevents unnecessary DB connections from unauthenticated attempts.
     console.log('🔌 Connecting to MongoDB Atlas...');
     await connectDB();
     console.log('✅ Connected! Starting interactive menu.\n');
