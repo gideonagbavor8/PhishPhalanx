@@ -195,8 +195,8 @@ module.exports = {
   Incident,
   createIncident,
   listIncidents,
-  getIncident,
   updateIncidentStatus,
-  deleteIncident,
+  getIncident,
   getIncidentsBySeverity,
+  deleteIncident,
 };
