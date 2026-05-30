@@ -318,10 +318,9 @@ MIT License
 ---
 
 ## Support
-gideonagbavor8@gmail.com
 For issues, questions, or suggestions:
 - Open an issue on GitHub
-- Contact: [Your email here]
+- Contact: gideonagbavor8@gmail.com
 - Security concerns: See [SECURITY.md](SECURITY.md)
 
 ---
