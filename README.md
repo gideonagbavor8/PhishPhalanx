@@ -120,7 +120,7 @@ All data persists in a cloud-based MongoDB Atlas cluster, enabling multi-team co
 ---
 
 ## Video Walkthrough
-[YouTube link here]
+(https://www.loom.com/share/de14306bd973422e8a828d2e7ddcae98)
 
 ---
 
@@ -313,12 +313,12 @@ Contributions are welcome! Please:
 
 ## License
 
-[Specify your license here]
+MIT License 
 
 ---
 
 ## Support
-
+gideonagbavor8@gmail.com
 For issues, questions, or suggestions:
 - Open an issue on GitHub
 - Contact: [Your email here]
