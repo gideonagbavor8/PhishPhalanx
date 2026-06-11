@@ -39,7 +39,7 @@ All data persists in a cloud-based MongoDB Atlas cluster, enabling multi-team co
 - **ECMAScript 6 (ES2022)** – Modern JavaScript with async/await
 
 **Core Dependencies:**
-- **Mongoose** (v8.15.0) – MongoDB ODM with schema validation
+- **mongodb** (v6.20.0+) – Official native MongoDB driver for Node.js
 - **dotenv** (v16.6.1) – Environment variable management for sensitive credentials
 - **readline** (built-in) – Terminal-based interactive prompts
 
@@ -278,7 +278,7 @@ try {
 
 ## Useful Websites
 - [MongoDB Atlas Docs](https://www.mongodb.com/docs/atlas/)
-- [Mongoose Docs](https://mongoosejs.com/docs/)
+- [MongoDB Node.js Driver Docs](https://www.mongodb.com/docs/drivers/node/current/)
 - [Node.js Docs](https://nodejs.org/en/docs)
 - [MITRE ATT&CK Framework](https://attack.mitre.org/)
 - [Node.js Readline Module](https://nodejs.org/api/readline.html)
