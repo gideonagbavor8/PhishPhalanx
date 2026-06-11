@@ -5,7 +5,8 @@
  * seed.js — Database Seeder for PhishPhalanx
  * ─────────────────────────────────────────────────────────────────────────────
  * Populates MongoDB Atlas with sample phishing incidents and blacklisted
- * domains for development, testing, and demonstration purposes.
+ * domains for development, testing, and demonstration purposes using the native
+ * MongoDB Node.js driver.
  *
  * Run directly: node src/seed.js
  * Or via npm  : npm run seed
@@ -13,9 +14,7 @@
  */
 
 require('dotenv').config();
-const { connectDB, closeDB }                       = require('./db');
-const Incident                                     = require('./models/Incident');
-const Blacklist                                    = require('./models/Blacklist');
+const db                                              = require('./db');
 const { defangHostname, hashDomain, normalizeDomain } = require('./blacklist');
 
 /**
@@ -26,17 +25,19 @@ const { defangHostname, hashDomain, normalizeDomain } = require('./blacklist');
  * @returns {Promise<{ incidentsSeeded: number, blacklistSeeded: number }>}
  */
 async function seedSampleData() {
-  await connectDB();
+  // Ensure we are connected to MongoDB Atlas.
+  await db.connectDB();
   const now = new Date();
 
   // ── Clear existing data ────────────────────────────────────────────────────
-  await Incident.deleteMany({});
-  await Blacklist.deleteMany({});
+  // The MongoDB driver's collection().deleteMany(filter) method deletes all documents
+  // matching the filter query. An empty filter {} matches all documents in the collection,
+  // effectively clearing the collection.
+  await db.collection('incidents').deleteMany({});
+  await db.collection('blacklist').deleteMany({});
   console.log('🗑️  Cleared existing incidents and blacklist entries.');
 
   // ── Sample Incident Documents ──────────────────────────────────────────────
-  // Each document matches the Incident schema fields exactly:
-  // incidentId, targetDomain, dangerLevel, reporterEmail, status, timestamp
   const incidents = [
     {
       incidentId:    'INC-1001',
@@ -80,12 +81,12 @@ async function seedSampleData() {
     },
   ];
 
-  await Incident.insertMany(incidents);
+  // The MongoDB driver's collection().insertMany(docs) method inserts an array of
+  // documents into the collection. It modifies each document in-place to add a unique '_id' field.
+  await db.collection('incidents').insertMany(incidents);
   console.log(`✅ Seeded ${incidents.length} incident(s).`);
 
   // ── Sample Blacklist Documents ─────────────────────────────────────────────
-  // Each document matches the Blacklist schema fields exactly:
-  // domainHash, originalDomain, addedAt
   const rawDomains = [
     'secure-paypal-login.com',
     'appleid.verify-account.org',
@@ -103,7 +104,9 @@ async function seedSampleData() {
     };
   });
 
-  await Blacklist.insertMany(blacklistDocs);
+  // The MongoDB driver's collection().insertMany(docs) method inserts an array of
+  // documents into the collection. It modifies each document in-place to add a unique '_id' field.
+  await db.collection('blacklist').insertMany(blacklistDocs);
   console.log(`✅ Seeded ${blacklistDocs.length} blacklist entry/entries.`);
 
   return { incidentsSeeded: incidents.length, blacklistSeeded: blacklistDocs.length };
@@ -116,12 +119,12 @@ if (require.main === module) {
   seedSampleData()
     .then(async (res) => {
       console.log('🎉 Seeding complete:', res);
-      await closeDB();
+      await db.closeDB();
       process.exit(0);
     })
     .catch(async (err) => {
       console.error('💥 Seeding failed:', err.message);
-      await closeDB();
+      await db.closeDB();
       process.exitCode = 1;
     });
 }
