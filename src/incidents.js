@@ -5,15 +5,12 @@
  * incidents.js — CRUD Operations for Phishing Incidents
  * ─────────────────────────────────────────────────────────────────────────────
  * Provides the business logic layer for creating, reading, and updating
- * phishing incident records. All database interaction goes through the
- * Incident Mongoose model defined in /src/models/Incident.js.
+ * phishing incident records using the native MongoDB driver instead of Mongoose.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-// Import the Incident model from the dedicated models folder.
-// The schema (fields, validation, enums) lives there; this file only
-// contains the functions that operate on those documents.
-const Incident = require('./models/Incident');
+const crypto = require('crypto');
+const db = require('./db');
 
 // ── CRUD Operations ────────────────────────────────────────────────────────────
 
@@ -27,16 +24,37 @@ const Incident = require('./models/Incident');
  */
 async function createIncident({ reporterEmail, dangerLevel, targetDomain } = {}) {
   try {
-    const incident = new Incident({
-      targetDomain:  targetDomain  || 'unknown',
-      dangerLevel:   dangerLevel   || 'low',
-      reporterEmail: reporterEmail || '',
-      // incidentId, status, and timestamp use schema defaults automatically
-    });
+    // Validation checks to maintain data integrity
+    if (!targetDomain) {
+      throw new Error('targetDomain is required — every incident must have a target.');
+    }
 
-    await incident.save();
-    console.log(`✅ Incident created successfully: ${incident.incidentId}`);
-    return incident.toObject();
+    const validLevels = ['low', 'medium', 'high'];
+    const finalDangerLevel = dangerLevel || 'low';
+    if (!validLevels.includes(finalDangerLevel)) {
+      throw new Error('dangerLevel must be one of: low, medium, high');
+    }
+
+    // Auto-generate incident ID (e.g., INC-3F9A12BC) using 4 random bytes
+    const incidentId = `INC-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const now = new Date();
+
+    const doc = {
+      incidentId,
+      targetDomain: targetDomain.trim(),
+      dangerLevel: finalDangerLevel,
+      reporterEmail: reporterEmail ? reporterEmail.trim() : '',
+      status: 'open',
+      timestamp: now,
+    };
+
+    // The MongoDB driver's collection('incidents').insertOne() method inserts a single
+    // document into the collection. It modifies the document object in-place by adding
+    // a unique '_id' field before sending it to Atlas.
+    await db.collection('incidents').insertOne(doc);
+
+    console.log(`✅ Incident created successfully: ${doc.incidentId}`);
+    return doc;
   } catch (error) {
     console.error('❌ Failed to create incident:', error.message);
     throw error;
@@ -57,8 +75,14 @@ async function listIncidents(filters = {}) {
     if (filters.status)      query.status      = filters.status;
     if (filters.dangerLevel) query.dangerLevel  = filters.dangerLevel;
 
-    // Sort newest first using the timestamp field defined in the schema
-    const incidents = await Incident.find(query).sort({ timestamp: -1 }).lean();
+    // The MongoDB driver's collection('incidents').find(query) method returns a cursor
+    // for documents matching the query. We sort the cursor in descending order by
+    // timestamp (-1) and call toArray() to asynchronously fetch all documents as an array.
+    const incidents = await db.collection('incidents')
+      .find(query)
+      .sort({ timestamp: -1 })
+      .toArray();
+
     console.log(`✅ Retrieved ${incidents.length} incident(s) with filters:`, filters);
     return incidents;
   } catch (error) {
@@ -81,7 +105,10 @@ async function getIncident(incidentId) {
       throw new Error('Invalid incidentId provided. Must be a non-empty string.');
     }
 
-    const incident = await Incident.findOne({ incidentId }).lean();
+    // The MongoDB driver's collection('incidents').findOne(query) method finds and returns the
+    // first document in the collection that matches the query filter. If no matching document
+    // is found, it returns null.
+    const incident = await db.collection('incidents').findOne({ incidentId });
     
     if (!incident) {
       console.warn(`⚠️  Incident "${incidentId}" not found.`);
@@ -100,8 +127,6 @@ async function getIncident(incidentId) {
  * updateIncidentStatus()
  * Updates the workflow status of a specific incident by its incidentId.
  *
- * Valid transitions: open → investigating → closed
- *
  * @param {string} incidentId  The unique INC-XXXXXXXX identifier
  * @param {string} newStatus   Must be one of: open, investigating, closed
  * @returns {Promise<boolean>} true if update succeeded
@@ -118,7 +143,10 @@ async function updateIncidentStatus(incidentId, newStatus) {
       throw new Error(`Invalid status "${newStatus}". Must be one of: ${validStatuses.join(', ')}`);
     }
 
-    const result = await Incident.updateOne(
+    // The MongoDB driver's collection('incidents').updateOne(filter, update) method updates
+    // a single document matching the filter query. We use the $set operator to change
+    // the status field. It returns an object containing matchedCount and modifiedCount.
+    const result = await db.collection('incidents').updateOne(
       { incidentId },
       { $set: { status: newStatus } }
     );
@@ -149,7 +177,9 @@ async function deleteIncident(incidentId) {
       throw new Error('Invalid incidentId provided. Must be a non-empty string.');
     }
 
-    const result = await Incident.deleteOne({ incidentId });
+    // The MongoDB driver's collection('incidents').deleteOne(filter) method deletes
+    // a single document matching the filter query. It returns an object containing deletedCount.
+    const result = await db.collection('incidents').deleteOne({ incidentId });
 
     if (result.deletedCount === 0) {
       throw new Error(`Incident "${incidentId}" not found. Nothing was deleted.`);
@@ -178,10 +208,14 @@ async function getIncidentsBySeverity(level) {
       throw new Error(`Invalid severity level "${level}". Must be one of: ${validLevels.join(', ')}`);
     }
 
-    const incidents = await Incident.find({ 
+    // The MongoDB driver's collection('incidents').find(query) method is called here with a
+    // compound query filter object { dangerLevel: level, status: 'open' } to find all open
+    // incidents matching the specified severity level. We sort by timestamp descending (-1)
+    // and convert the cursor to an array using toArray().
+    const incidents = await db.collection('incidents').find({ 
       dangerLevel: level,
       status: 'open'
-    }).sort({ timestamp: -1 }).lean();
+    }).sort({ timestamp: -1 }).toArray();
 
     console.log(`✅ Retrieved ${incidents.length} open incident(s) at severity level "${level}"`);
     return incidents;
@@ -192,7 +226,6 @@ async function getIncidentsBySeverity(level) {
 }
 
 module.exports = {
-  Incident,
   createIncident,
   listIncidents,
   updateIncidentStatus,
